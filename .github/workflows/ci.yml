@@ -4,13 +4,20 @@ jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix: {python-version: ['3.9', '3.11', '3.12']}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: {python-version: '${{ matrix.python-version }}'}
       - run: pip install -e '.[dev]'
-      - run: pytest
+      - name: Configure Spark Python runtime
+        shell: bash
+        run: |
+          echo "PYSPARK_PYTHON=$(command -v python)" >> "$GITHUB_ENV"
+          echo "PYSPARK_DRIVER_PYTHON=$(command -v python)" >> "$GITHUB_ENV"
+          echo "SPARK_LOCAL_IP=127.0.0.1" >> "$GITHUB_ENV"
+      - run: python -m pytest -q
   package:
     runs-on: ubuntu-latest
     steps:

@@ -68,6 +68,7 @@ def train_native_distributed(estimator, df, lgb):
     if estimator.early_stopping_rounds or estimator.validation_data:
         raise ValueError("validation_data and early stopping are currently supported with num_workers=1; use a validation split per worker for native distributed mode")
     import json
+    import os
     import socket
     from pyspark import BarrierTaskContext
     columns = [estimator.features_col, estimator.label_col] + ([estimator.weight_col] if estimator.weight_col else [])
@@ -79,7 +80,15 @@ def train_native_distributed(estimator, df, lgb):
             vals = list(row); value = _vector(vals[0])
             if value is not None: records.append((value, float(vals[1]), float(vals[2]) if estimator.weight_col else None))
         if not records: raise ValueError("Every native LightGBM worker must receive at least one row")
-        host = socket.gethostbyname(socket.gethostname()); port = 12400 + context.partitionId()
+        host = os.environ.get("SPARK_LOCAL_IP")
+        if not host:
+            try:
+                host = socket.gethostbyname(socket.getfqdn())
+            except socket.gaierror:
+                host = socket.gethostbyname(socket.gethostname())
+        if host.startswith("127.") and not socket.gethostname().lower() in {"localhost", "127.0.0.1"}:
+            raise RuntimeError("LightGBM worker hostname resolved to loopback; configure executor DNS or SPARK_LOCAL_IP")
+        port = estimator.local_listen_port + context.partitionId()
         peers = context.allGather(json.dumps({"host": host, "port": port}))
         x = np.asarray([r[0] for r in records], dtype=float); y = np.asarray([r[1] for r in records], dtype=float)
         weight = np.asarray([r[2] for r in records], dtype=float) if estimator.weight_col else None

@@ -3,9 +3,9 @@ from ._validation import check_columns, require_runtime
 
 class BaseLightGBM:
     kind = "regressor"
-    def __init__(self, features_col="features", label_col="label", prediction_col="prediction", raw_prediction_col="rawPrediction", probability_col="probability", leaf_prediction_col="leafPrediction", weight_col=None, group_col=None, categorical_feature=None, validation_data=None, early_stopping_rounds=None, seed=0, num_workers=1, objective=None, **params):
+    def __init__(self, features_col="features", label_col="label", prediction_col="prediction", raw_prediction_col="rawPrediction", probability_col="probability", leaf_prediction_col="leafPrediction", weight_col=None, group_col=None, categorical_feature=None, validation_data=None, early_stopping_rounds=None, seed=0, num_workers=1, local_listen_port=12400, objective=None, **params):
         self.features_col, self.label_col = features_col, label_col; self.prediction_col, self.raw_prediction_col = prediction_col, raw_prediction_col; self.probability_col, self.leaf_prediction_col = probability_col, leaf_prediction_col
-        self.weight_col, self.group_col, self.categorical_feature = weight_col, group_col, categorical_feature; self.validation_data, self.early_stopping_rounds = validation_data, early_stopping_rounds; self.seed, self.num_workers, self.objective, self.params = seed, num_workers, objective, params
+        self.weight_col, self.group_col, self.categorical_feature = weight_col, group_col, categorical_feature; self.validation_data, self.early_stopping_rounds = validation_data, early_stopping_rounds; self.seed, self.num_workers, self.local_listen_port, self.objective, self.params = seed, num_workers, local_listen_port, objective, params
     def fit(self, dataset, params=None, validation_data=None):
         require_runtime(); check_columns(dataset, self.features_col, self.label_col)
         if params: self.params.update(params)
