@@ -10,13 +10,12 @@ lightgbm = pytest.importorskip("lightgbm")
 def test_classifier_spark_local_matches_native_prediction():
     os.environ.setdefault("PYSPARK_PYTHON", sys.executable)
     os.environ.setdefault("PYSPARK_DRIVER_PYTHON", sys.executable)
-    from pyspark.ml.linalg import Vectors
     from pyspark.sql import SparkSession
     from sparklightgbm import LightGBMClassifier
 
     spark = SparkSession.builder.master("local[2]").appName("sparklightgbm-test").config("spark.ui.enabled", "false").getOrCreate()
     try:
-        frame = spark.createDataFrame([(Vectors.dense([0.0, 0.0]), 0.0), (Vectors.dense([0.0, 1.0]), 0.0), (Vectors.dense([1.0, 0.0]), 1.0), (Vectors.dense([1.0, 1.0]), 1.0)], ["features", "label"])
+        frame = spark.createDataFrame([([0.0, 0.0], 0.0), ([0.0, 1.0], 0.0), ([1.0, 0.0], 1.0), ([1.0, 1.0], 1.0)], ["features", "label"])
         model = LightGBMClassifier(n_estimators=5, num_leaves=4, seed=7).fit(frame)
         result = model.transform(frame).select("prediction", "probability", "rawPrediction", "leafPrediction").collect()
         assert len(result) == 4
