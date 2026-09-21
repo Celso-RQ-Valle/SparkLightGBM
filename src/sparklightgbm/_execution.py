@@ -14,7 +14,13 @@ def collect_training_data(df, features_col, label_col, weight_col=None, group_co
     def rows(partition):
         for row in partition:
             vals = list(row); x = _vector(vals[0])
-            if x is not None: yield (x, float(vals[1]), float(vals[2]) if weight_col else None, int(vals[3]) if group_col else None)
+            if x is None:
+                continue
+            offset = 2
+            weight = float(vals[offset]) if weight_col else None
+            offset += 1 if weight_col else 0
+            group = int(vals[offset]) if group_col else None
+            yield (x, float(vals[1]), weight, group)
     parts = df.select(*columns).rdd.mapPartitions(rows).collect()
     if not parts: raise ValueError("The training DataFrame contains no usable feature rows")
     x = np.asarray([p[0] for p in parts], dtype=float); y = np.asarray([p[1] for p in parts], dtype=float)
