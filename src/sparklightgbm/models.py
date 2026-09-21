@@ -3,13 +3,23 @@ from .persistence import load_native_model, save_native_model
 
 class BaseLightGBMModel:
     def __init__(self, booster, estimator, n_features, classes=None): self.booster, self.estimator, self.n_features, self.classes_ = booster, estimator, n_features, classes
+    def _is_binary_classifier(self):
+        return self.estimator.kind == "classifier" and self.booster.num_model_per_iteration() == 1
     def _predict(self, value, kind):
+        import math
         import numpy as np
         if hasattr(value, "toArray"): value = value.toArray()
-        result = self.booster.predict(np.asarray([value], dtype=float), pred_leaf=(kind == "leaf"), raw_score=(kind == "raw"), pred_contrib=(kind == "shap"))[0]
+        binary = self._is_binary_classifier()
+        result = self.booster.predict(np.asarray([value], dtype=float), pred_leaf=(kind == "leaf"), raw_score=(kind in {"raw", "prob"} and binary) or kind == "raw", pred_contrib=(kind == "shap"))[0]
         if kind == "prediction" and self.estimator.kind == "classifier":
             result = int(np.argmax(result)) if hasattr(result, "__len__") else int(result >= 0.5)
+        if kind == "raw" and binary:
+            score = float(np.asarray(result).reshape(-1)[0])
+            return [-score, score]
         if kind == "prob":
+            if binary:
+                score = float(np.asarray(result).reshape(-1)[0])
+                return [1.0 / (1.0 + math.exp(score)), 1.0 / (1.0 + math.exp(-score))]
             return [float(value) for value in np.asarray(result).reshape(-1).tolist()]
         if kind == "leaf":
             return [int(value) for value in np.asarray(result).reshape(-1).tolist()]
@@ -27,7 +37,7 @@ class BaseLightGBMModel:
         out = dataset.withColumn(pcol, udf(lambda x: self._predict(x, prediction_kind), DoubleType())(self.estimator.features_col))
         raw_name = raw_prediction_col or self.estimator.raw_prediction_col
         if raw_name:
-            raw_type = ArrayType(DoubleType()) if probability and getattr(self.booster, "num_model_per_iteration", lambda: 1)() > 1 else DoubleType()
+            raw_type = ArrayType(DoubleType(), containsNull=False) if probability else DoubleType()
             out = out.withColumn(raw_name, udf(lambda x: self._predict(x, "raw"), raw_type)(self.estimator.features_col))
         if probability:
             prob_name = probability_col or self.estimator.probability_col
@@ -35,8 +45,20 @@ class BaseLightGBMModel:
         leaf_name = leaf_prediction_col or self.estimator.leaf_prediction_col
         if leaf_name: out = out.withColumn(leaf_name, udf(lambda x: self._predict(x, "leaf"), ArrayType(LongType(), containsNull=False))(self.estimator.features_col))
         return out
-    def predict_raw(self, matrix): return self.booster.predict(matrix, raw_score=True)
-    def predict_probability(self, matrix): return self.booster.predict(matrix)
+    def predict_raw(self, matrix):
+        result = self.booster.predict(matrix, raw_score=True)
+        if not self._is_binary_classifier():
+            return result
+        import numpy as np
+        scores = np.asarray(result, dtype=float).reshape(-1)
+        return np.column_stack((-scores, scores))
+    def predict_probability(self, matrix):
+        if not self._is_binary_classifier():
+            return self.booster.predict(matrix)
+        import math
+        import numpy as np
+        scores = np.asarray(self.booster.predict(matrix, raw_score=True), dtype=float).reshape(-1)
+        return np.asarray([[1.0 / (1.0 + math.exp(score)), 1.0 / (1.0 + math.exp(-score))] for score in scores])
     def predict_leaf(self, matrix): return self.booster.predict(matrix, pred_leaf=True)
     def predict_shap(self, matrix): return shap_values(self.booster, matrix)
     def feature_importance(self, importance_type="split"): return feature_importance(self.booster, importance_type)

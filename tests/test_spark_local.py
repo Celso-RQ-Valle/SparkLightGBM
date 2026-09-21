@@ -20,18 +20,20 @@ def test_classifier_spark_local_matches_native_prediction():
         model = LightGBMClassifier(n_estimators=5, num_leaves=4, seed=7).fit(frame)
         result = model.transform(frame).select("prediction", "probability", "rawPrediction", "leafPrediction").collect()
         assert len(result) == 4
-        native_probability = model.predict_probability([[row[0][0], row[0][1]] for row in frame.select("features").collect()])
-        native_raw = model.predict_raw([[row[0][0], row[0][1]] for row in frame.select("features").collect()])
+        features = [[row[0][0], row[0][1]] for row in frame.select("features").collect()]
+        native_scores = model.booster.predict(features, raw_score=True)
         assert all(row.probability is not None for row in result)
         assert all(row.rawPrediction is not None for row in result)
         assert all(row.leafPrediction is not None and all(value is not None for value in row.leafPrediction) for row in result)
         assert all(0.0 <= row.probability[0] <= 1.0 for row in result)
         assert all(float(row.prediction) == float(row.probability[0] >= 0.5) for row in result)
         assert all(isinstance(value, int) for row in result for value in row.leafPrediction)
-        np.testing.assert_allclose([row.probability[0] for row in result], native_probability, rtol=1e-12, atol=1e-12)
-        np.testing.assert_allclose([row.rawPrediction for row in result], native_raw, rtol=1e-12, atol=1e-12)
-        assert model.predict_probability([[1.0, 1.0]]).shape == (1,)
-        assert model.predict_raw([[1.0, 1.0]]).shape == (1,)
+        expected_raw = np.column_stack((-native_scores, native_scores))
+        np.testing.assert_allclose([row.rawPrediction for row in result], expected_raw, rtol=1e-12, atol=1e-12)
+        expected_probability = 1.0 / (1.0 + np.exp(-expected_raw))
+        np.testing.assert_allclose([row.probability for row in result], expected_probability, rtol=1e-12, atol=1e-12)
+        assert model.predict_probability([[1.0, 1.0]]).shape == (1, 2)
+        assert model.predict_raw([[1.0, 1.0]]).shape == (1, 2)
         assert model.predict_leaf([[1.0, 1.0]]).shape[0] == 1
         assert model.predict_leaf([[1.0, 1.0]]).shape[1] >= 1
         assert model.predict_shap([[1.0, 1.0]]).shape == (1, 3)
