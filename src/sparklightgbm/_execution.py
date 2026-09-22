@@ -27,10 +27,26 @@ def collect_training_data(df, features_col, label_col, weight_col=None, group_co
     w = np.asarray([p[2] for p in parts], dtype=float) if weight_col else None
     return x, y, w, ([p[3] for p in parts] if group_col else None)
 
+def resolve_num_workers(estimator, df, validation_data=None):
+    """Choose a safe amount of Spark parallelism when no override is supplied."""
+    if estimator.num_workers is not None:
+        return estimator.num_workers
+    # Validation is collected on the driver today, and local mode is faster and
+    # safer without a barrier stage or multiple competing native thread pools.
+    if estimator.kind == "ranker" or estimator.early_stopping_rounds or validation_data is not None or estimator.validation_data is not None:
+        return 1
+    sc = df.sparkSession.sparkContext
+    if sc.master.lower().startswith("local"):
+        return 1
+    available_slots = max(1, int(sc.defaultParallelism))
+    input_partitions = max(1, int(df.rdd.getNumPartitions()))
+    return min(available_slots, input_partitions)
+
 def train_native(estimator, df, validation_data=None):
     _, lgb = require_runtime()
-    if estimator.num_workers > 1:
-        return train_native_distributed(estimator, df, lgb)
+    num_workers = resolve_num_workers(estimator, df, validation_data)
+    if num_workers > 1:
+        return train_native_distributed(estimator, df, lgb, num_workers)
     x, y, w, groups = collect_training_data(df, estimator.features_col, estimator.label_col, estimator.weight_col, estimator.group_col)
     params = dict(estimator.params); params.setdefault("device_type", "cpu"); params.setdefault("seed", estimator.seed); params.setdefault("verbosity", -1)
     num_boost_round = int(params.pop("n_estimators", params.pop("num_boost_round", 100)))
@@ -69,7 +85,7 @@ def train_native(estimator, df, validation_data=None):
     classes = np.unique(y).tolist() if estimator.kind == "classifier" else None
     return booster, x.shape[1], classes
 
-def train_native_distributed(estimator, df, lgb):
+def train_native_distributed(estimator, df, lgb, num_workers):
     """Coordinate official LightGBM's data-parallel learner from Spark barriers."""
     if estimator.early_stopping_rounds or estimator.validation_data:
         raise ValueError("validation_data and early stopping are currently supported with num_workers=1; use a validation split per worker for native distributed mode")
@@ -78,7 +94,7 @@ def train_native_distributed(estimator, df, lgb):
     import socket
     from pyspark import BarrierTaskContext
     columns = [estimator.features_col, estimator.label_col] + ([estimator.weight_col] if estimator.weight_col else [])
-    worker_df = df.select(*columns).repartition(estimator.num_workers)
+    worker_df = df.select(*columns).repartition(num_workers)
     def worker(rows):
         context = BarrierTaskContext.get()
         records = []
@@ -100,9 +116,12 @@ def train_native_distributed(estimator, df, lgb):
         weight = np.asarray([r[2] for r in records], dtype=float) if estimator.weight_col else None
         params = dict(estimator.params); rounds = int(params.pop("n_estimators", params.pop("num_boost_round", 100)))
         params.setdefault("device_type", "cpu"); params.setdefault("seed", estimator.seed); params.setdefault("verbosity", -1)
+        # Each barrier task occupies one Spark CPU slot. Restrict its native
+        # thread pool unless the user explicitly requests a different value.
+        params.setdefault("num_threads", 1)
         params.setdefault("objective", estimator.objective or ("multiclass" if len(np.unique(y)) > 2 else "binary") if estimator.kind == "classifier" else "lambdarank" if estimator.kind == "ranker" else "regression")
         if estimator.kind == "classifier" and params["objective"] == "multiclass": params.setdefault("num_class", len(np.unique(y)))
-        params.update({"tree_learner": "data", "num_machines": estimator.num_workers, "machines": " ".join(f"{json.loads(p)['host']}:{json.loads(p)['port']}" for p in peers), "local_listen_port": port})
+        params.update({"tree_learner": "data", "num_machines": num_workers, "machines": " ".join(f"{json.loads(p)['host']}:{json.loads(p)['port']}" for p in peers), "local_listen_port": port})
         dataset = lgb.Dataset(x, label=y, weight=weight, categorical_feature=estimator.categorical_feature or "auto")
         booster = lgb.train(params, dataset, num_boost_round=rounds)
         yield json.dumps({"rank": context.partitionId(), "model": booster.model_to_string()})

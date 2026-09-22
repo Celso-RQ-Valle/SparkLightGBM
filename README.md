@@ -59,7 +59,7 @@ All three estimators accept the shared parameters below. Any additional keyword 
 | `validation_data` | Spark `DataFrame` \| `None` | `None` | Validation DataFrame with matching feature, label, weight, and group names. Can also be passed to `fit()`. |
 | `early_stopping_rounds` | `int \| None` | `None` | Rounds without validation improvement; requires validation data and `num_workers=1`. |
 | `seed` | `int` | `0` | Seed passed to LightGBM. |
-| `num_workers` | `int` | `1` | `1` uses driver training; values above `1` enable native data-parallel Spark barrier training. |
+| `num_workers` | `int \| None` | `None` | Automatically uses safe Spark parallelism. Local Spark and validation use driver training; clustered execution uses at most the available task slots and input partitions. Set `1` for driver training or a larger value to override it. |
 | `local_listen_port` | `int` | `12400` | Distributed listener base port; worker `n` uses `local_listen_port + n`. |
 | `objective` | `str \| None` | `None` | Native objective: defaults to `binary`/`multiclass`, `regression`, or `lambdarank`; `quantile` is supported for regression. |
 | `**params` | `str`/`int`/`float`/`bool`/native value | - | Additional native LightGBM parameters, including `n_estimators`, `learning_rate`, `num_leaves`, `max_depth`, `min_child_samples`, `subsample`, `colsample_bytree`, `reg_alpha`, `reg_lambda`, `max_bin`, `bagging_seed`, and `verbosity`. |
@@ -127,9 +127,9 @@ Validation data and early stopping are currently supported with `num_workers=1`.
 
 ## Distributed execution and limitations
 
-With default `num_workers=1`, Spark partitions are converted to NumPy arrays and collected to the driver before native training. This mode is intended for local development and smaller datasets whose feature matrix fits in driver memory.
+With `num_workers=None`, local Spark, ranking, validation data, and early stopping use driver training. Spark partitions are converted to NumPy arrays and collected to the driver in this mode, which is intended for local development and smaller datasets whose feature matrix fits in driver memory. On a cluster, classifiers and regressors use the smaller of Spark's available parallelism and the input partition count.
 
-With `num_workers > 1`, Spark repartitions the input, starts one barrier task per worker, exchanges worker addresses, and coordinates LightGBM's native data-parallel learner. Distributed execution requires:
+With an automatically selected or explicit `num_workers > 1`, Spark repartitions the input, starts one barrier task per worker, exchanges worker addresses, and coordinates LightGBM's native data-parallel learner. Each distributed worker defaults to one native thread to avoid oversubscribing Spark CPU slots; pass native `num_threads` explicitly to override it. Distributed execution requires:
 
 - SparkLightGBM, NumPy, and the same compatible LightGBM build on every executor.
 - Spark barrier execution support.
