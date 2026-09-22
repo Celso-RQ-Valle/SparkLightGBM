@@ -25,12 +25,15 @@ def test_auto_workers_are_bounded_by_slots_and_partitions():
     assert resolve_num_workers(_estimator(), _frame(parallelism=3, partitions=10)) == 3
 
 
-def test_auto_workers_use_driver_for_local_and_validation_modes():
+def test_auto_workers_use_driver_for_local_and_ranking_modes():
     assert resolve_num_workers(_estimator(), _frame(master="local[8]")) == 1
-    assert resolve_num_workers(_estimator(validation_data=object()), _frame()) == 1
-    assert resolve_num_workers(_estimator(), _frame(), validation_data=object()) == 1
-    assert resolve_num_workers(_estimator(early_stopping_rounds=5), _frame()) == 1
     assert resolve_num_workers(_estimator(kind="ranker"), _frame()) == 1
+
+
+def test_validation_does_not_disable_cluster_distribution():
+    assert resolve_num_workers(_estimator(validation_data=object()), _frame()) == 5
+    assert resolve_num_workers(_estimator(), _frame(), validation_data=object()) == 5
+    assert resolve_num_workers(_estimator(early_stopping_rounds=5), _frame()) == 5
 
 
 def test_explicit_worker_count_takes_precedence():

@@ -57,10 +57,11 @@ All three estimators accept the shared parameters below. Any additional keyword 
 | `group_col` | `str \| None` | `None` | Optional Spark column containing ranking group identifiers; required by `LightGBMRanker`. |
 | `categorical_feature` | `list[int] \| str \| None` | `None` | LightGBM categorical feature indices or native categorical setting. Feature values must be numeric category codes. |
 | `validation_data` | Spark `DataFrame` \| `None` | `None` | Validation DataFrame with matching feature, label, weight, and group names. Can also be passed to `fit()`. |
-| `early_stopping_rounds` | `int \| None` | `None` | Rounds without validation improvement; requires validation data and `num_workers=1`. |
+| `early_stopping_rounds` | `int \| None` | `None` | Rounds without validation improvement; requires validation data. Distributed mode supports exactly aggregatable metrics. |
 | `seed` | `int` | `0` | Seed passed to LightGBM. |
 | `num_workers` | `int \| None` | `None` | Automatically uses safe Spark parallelism. Local Spark and validation use driver training; clustered execution uses at most the available task slots and input partitions. Set `1` for driver training or a larger value to override it. |
 | `local_listen_port` | `int` | `12400` | Distributed listener base port; worker `n` uses `local_listen_port + n`. |
+| `prediction_batch_size` | `int` | `1024` | Rows scored per native LightGBM prediction batch in each Spark partition. |
 | `objective` | `str \| None` | `None` | Native objective: defaults to `binary`/`multiclass`, `regression`, or `lambdarank`; `quantile` is supported for regression. |
 | `**params` | `str`/`int`/`float`/`bool`/native value | - | Additional native LightGBM parameters, including `n_estimators`, `learning_rate`, `num_leaves`, `max_depth`, `min_child_samples`, `subsample`, `colsample_bytree`, `reg_alpha`, `reg_lambda`, `max_bin`, `bagging_seed`, and `verbosity`. |
 
@@ -123,11 +124,11 @@ model = LightGBMRegressor(n_estimators=500, early_stopping_rounds=30).fit(
 )
 ```
 
-Validation data and early stopping are currently supported with `num_workers=1`. Distributed native mode rejects them explicitly because validation coordination across native workers is not implemented in this beta.
+Validation data remains partitioned in distributed mode. Each worker builds local training and validation datasets, while Spark barrier synchronization aggregates decomposable native metrics before the early-stopping callback. Metrics whose exact global value cannot be reconstructed from shard-level scalar results (currently `auc`, `average_precision`, `map`, and `ndcg`) are rejected for distributed early stopping; use `num_workers=1` for those metrics.
 
 ## Distributed execution and limitations
 
-With `num_workers=None`, local Spark, ranking, validation data, and early stopping use driver training. Spark partitions are converted to NumPy arrays and collected to the driver in this mode, which is intended for local development and smaller datasets whose feature matrix fits in driver memory. On a cluster, classifiers and regressors use the smaller of Spark's available parallelism and the input partition count.
+With `num_workers=None`, local Spark and ranking use driver training. Spark partitions are converted to NumPy arrays and collected to the driver in this mode, which is intended for local development and smaller datasets whose feature matrix fits in driver memory. On a cluster, classifiers and regressors use the smaller of Spark's available parallelism and the input partition count, including when distributed validation and early stopping are enabled.
 
 With an automatically selected or explicit `num_workers > 1`, Spark repartitions the input, starts one barrier task per worker, exchanges worker addresses, and coordinates LightGBM's native data-parallel learner. Each distributed worker defaults to one native thread to avoid oversubscribing Spark CPU slots; pass native `num_threads` explicitly to override it. Distributed execution requires:
 
@@ -137,7 +138,9 @@ With an automatically selected or explicit `num_workers > 1`, Spark repartitions
 - Listener ports available between executors; set `local_listen_port` if `12400 + worker_id` is unavailable.
 - Correct executor networking. `SPARK_LOCAL_IP` can provide the advertised worker address when hostname resolution is unsuitable.
 
-Distributed mode currently does not support `validation_data` or early stopping. Ranking groups should be partitioned so rows from the same group are not split across workers. Test distributed behavior on the target local Spark, Databricks, or standard cluster before relying on it.
+Distributed ranking is not yet supported because group boundaries must not be split across workers. Test distributed behavior on the target local Spark, Databricks, or standard cluster before relying on it.
+
+Inference uses partition-level NumPy batches instead of row-wise Python UDFs. A native booster is cached per reused Python worker, and classification prediction, probability, and raw prediction are derived from the same raw-score batch.
 
 ## Predictions and explainability
 

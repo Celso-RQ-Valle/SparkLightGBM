@@ -63,5 +63,23 @@ def test_classifier_spark_local_matches_native_prediction():
         assert len(ranking_result) == ranking.count()
         assert all(row.prediction is not None and row.rawPrediction is not None for row in ranking_result)
         assert all(row.leafPrediction is not None and all(isinstance(value, int) for value in row.leafPrediction) for row in ranking_result)
+
+        distributed = spark.createDataFrame(
+            [([float(i), float(i % 3)], float(i % 2)) for i in range(20)],
+            ["features", "label"],
+        )
+        validation = spark.createDataFrame(
+            [([float(i), float(i % 3)], float(i % 2)) for i in range(20, 28)],
+            ["features", "label"],
+        )
+        distributed_model = LightGBMClassifier(
+            num_workers=2,
+            n_estimators=20,
+            min_data_in_leaf=1,
+            early_stopping_rounds=3,
+            seed=7,
+        ).fit(distributed, validation_data=validation)
+        assert 0 < distributed_model.booster.current_iteration() <= 20
+        assert distributed_model.transform(validation).count() == validation.count()
     finally:
         spark.stop()

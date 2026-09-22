@@ -15,3 +15,15 @@ def test_num_workers_defaults_to_auto_and_validates_overrides():
     for invalid in (0, -1, 1.5, True):
         with pytest.raises(ValueError, match="num_workers"):
             LightGBMRegressor(num_workers=invalid)
+    for invalid in (0, -1, 1.5, True):
+        with pytest.raises(ValueError, match="prediction_batch_size"):
+            LightGBMRegressor(prediction_batch_size=invalid)
+
+
+def test_early_stopping_requires_validation_data():
+    from sparklightgbm import LightGBMRegressor
+    from sparklightgbm.errors import SparkLightGBMConfigurationError
+    estimator = LightGBMRegressor(early_stopping_rounds=2)
+    with pytest.raises(SparkLightGBMConfigurationError, match="requires validation_data"):
+        from sparklightgbm._execution import train_native
+        train_native(estimator, object())
