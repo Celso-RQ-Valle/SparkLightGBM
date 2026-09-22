@@ -1,6 +1,8 @@
 # SparkLightGBM
 
-SparkLightGBM is a Python bridge between Apache Spark DataFrames and the official [LightGBM](https://github.com/lightgbm-org/LightGBM) Python package. It provides Spark-facing estimators for binary and multiclass classification, regression, quantile regression, and LambdaRank without requiring SynapseML or a Scala/JVM extension.
+SparkLightGBM is a lightweight bridge between Apache Spark DataFrames and the official [LightGBM](https://github.com/lightgbm-org/LightGBM) Python package. It supports native LightGBM training across Spark executors without requiring SynapseML or a Scala/JVM extension.
+
+The project aims for efficient training and inference, numerical correctness, distributed scalability, and production reliability while keeping installation simple, dependencies minimal, and behavior portable across Spark environments. It does not aim to reproduce every feature of larger Spark integrations. Simplicity, performance, compatibility, and predictable behavior take priority over feature count.
 
 ## Status
 
@@ -30,10 +32,23 @@ from sparklightgbm import LightGBMClassifier
 estimator = LightGBMClassifier(
     features_col="features",
     label_col="label",
-    n_estimators=100,
+    num_workers=None,
+    num_iterations=300,
     learning_rate=0.05,
     num_leaves=31,
+    max_depth=-1,
+    min_data_in_leaf=20,
+    feature_fraction=0.9,
+    bagging_fraction=0.8,
+    bagging_freq=1,
+    lambda_l1=0.0,
+    lambda_l2=1.0,
+    min_gain_to_split=0.0,
+    max_bin=255,
     seed=7,
+    feature_fraction_seed=7,
+    bagging_seed=7,
+    data_random_seed=7,
 )
 
 model = estimator.fit(train_df)
@@ -43,7 +58,7 @@ predictions.select("prediction", "probability").show()
 
 ## Estimators and input parameters
 
-All three estimators accept the shared parameters below. Any additional keyword argument is forwarded to native LightGBM as a parameter. This allows new LightGBM parameters to be used without waiting for a SparkLightGBM wrapper release.
+All three estimators accept the shared parameters below. Additional keyword arguments are forwarded to native LightGBM, allowing supported LightGBM parameters to be used without waiting for a wrapper release.
 
 | Parameter | Accepted type | Default | Description |
 | --- | --- | --- | --- |
@@ -59,11 +74,11 @@ All three estimators accept the shared parameters below. Any additional keyword 
 | `validation_data` | Spark `DataFrame` \| `None` | `None` | Validation DataFrame with matching feature, label, weight, and group names. Can also be passed to `fit()`. |
 | `early_stopping_rounds` | `int \| None` | `None` | Rounds without validation improvement; requires validation data. Distributed mode supports exactly aggregatable metrics. |
 | `seed` | `int` | `0` | Seed passed to LightGBM. |
-| `num_workers` | `int \| None` | `None` | Automatically uses safe Spark parallelism. Local Spark and validation use driver training; clustered execution uses at most the available task slots and input partitions. Set `1` for driver training or a larger value to override it. |
+| `num_workers` | `int \| None` | `None` | Automatically selects worker count. Local Spark and ranking use driver training; clustered classification and regression use at most the available Spark slots and input partitions. Set explicitly to control execution mode. |
 | `local_listen_port` | `int` | `12400` | Distributed listener base port; worker `n` uses `local_listen_port + n`. |
 | `prediction_batch_size` | `int` | `1024` | Rows scored per native LightGBM prediction batch in each Spark partition. |
 | `objective` | `str \| None` | `None` | Native objective: defaults to `binary`/`multiclass`, `regression`, or `lambdarank`; `quantile` is supported for regression. |
-| `**params` | `str`/`int`/`float`/`bool`/native value | - | Additional native LightGBM parameters, including `n_estimators`, `learning_rate`, `num_leaves`, `max_depth`, `min_child_samples`, `subsample`, `colsample_bytree`, `reg_alpha`, `reg_lambda`, `max_bin`, `bagging_seed`, and `verbosity`. |
+| `**params` | Native value | - | Parameters forwarded to `lightgbm.Dataset` or `lightgbm.train`, as applicable. |
 
 Estimator-specific parameters:
 
@@ -73,7 +88,34 @@ Estimator-specific parameters:
 | `LightGBMRegressor` | - | - | Supports native regression parameters and `objective="quantile"`; set native `alpha` for the target quantile. |
 | `LightGBMRanker` | - | - | Uses LambdaRank by default. `group_col` identifies groups; rows are sorted by group before native training. |
 
-`n_estimators` is accepted as a LightGBM parameter and controls boosting rounds. `fit(params={...})` can supply or override native parameters:
+## Common native LightGBM parameters
+
+The following are commonly used native parameters, not a separate SparkLightGBM parameter system. Their appropriate values depend on the data, objective, validation strategy, and resource constraints.
+
+| Parameter | What it controls |
+| --- | --- |
+| `num_iterations` | Maximum number of boosting rounds. `n_estimators` and `num_boost_round` are also accepted by SparkLightGBM. |
+| `learning_rate` | Contribution of each new tree; interacts with the number of iterations. |
+| `num_leaves` | Maximum leaves per tree and therefore much of the model's capacity. |
+| `max_depth` | Optional tree-depth limit; negative values leave depth unconstrained. |
+| `min_data_in_leaf` | Minimum observations allowed in a leaf, controlling leaf granularity and regularization. |
+| `feature_fraction` | Fraction of features considered for each tree. |
+| `bagging_fraction` | Fraction of rows used when bagging is active. |
+| `bagging_freq` | Frequency of bagging; `0` disables it. |
+| `lambda_l1` | L1 regularization applied to leaf weights. |
+| `lambda_l2` | L2 regularization applied to leaf weights. |
+| `min_gain_to_split` | Minimum gain required to create a split. |
+| `max_bin` | Maximum histogram bins used for numeric features; affects accuracy, memory, and speed. |
+| `is_unbalance` | Enables automatic binary-class imbalance handling. Do not combine it with `scale_pos_weight`. |
+| `scale_pos_weight` | Explicit positive-class weight for binary classification. Do not combine it with `is_unbalance`. |
+| `seed` | Top-level seed used by SparkLightGBM and passed to LightGBM. |
+| `data_random_seed` | Seed used while constructing histogram bins. |
+| `feature_fraction_seed` | Seed used for feature subsampling. |
+| `bagging_seed` | Seed used for row subsampling. |
+| `drop_seed` | Seed used by DART boosting. |
+| `deterministic` | Requests stable CPU results; LightGBM may require related parameters for fully reproducible runs. |
+
+`fit(params={...})` can supply or override native parameters for a training call:
 
 ```python
 from sparklightgbm import LightGBMRegressor
@@ -84,7 +126,7 @@ model = LightGBMRegressor(features_col="features", label_col="target").fit(
 )
 ```
 
-For the complete version-specific native parameter set, see the [official LightGBM Parameters documentation](https://lightgbm.readthedocs.io/en/latest/Parameters.html). SparkLightGBM passes native parameters to `lightgbm.Dataset` and `lightgbm.train`; it does not use the scikit-learn wrapper.
+SparkLightGBM documents only common parameters. Availability, aliases, interactions, and exact semantics are determined by the installed LightGBM version; see the [official LightGBM parameter documentation](https://lightgbm.readthedocs.io/en/latest/Parameters.html) for the complete reference. SparkLightGBM uses `lightgbm.Dataset` and `lightgbm.train`, not the scikit-learn wrapper.
 
 The public training signature is `fit(dataset, params=None, validation_data=None)`: `dataset` and `validation_data` are Spark `DataFrame` objects, and `params` is a `dict[str, object]` of native LightGBM parameter overrides. A `validation_data` argument passed to `fit()` takes precedence over the constructor value.
 
@@ -126,11 +168,19 @@ model = LightGBMRegressor(n_estimators=500, early_stopping_rounds=30).fit(
 
 Validation data remains partitioned in distributed mode. Each worker builds local training and validation datasets, while Spark barrier synchronization aggregates decomposable native metrics before the early-stopping callback. Metrics whose exact global value cannot be reconstructed from shard-level scalar results (currently `auc`, `average_precision`, `map`, and `ndcg`) are rejected for distributed early stopping; use `num_workers=1` for those metrics.
 
-## Distributed execution and limitations
+## Local and distributed execution
 
-With `num_workers=None`, local Spark and ranking use driver training. Spark partitions are converted to NumPy arrays and collected to the driver in this mode, which is intended for local development and smaller datasets whose feature matrix fits in driver memory. On a cluster, classifiers and regressors use the smaller of Spark's available parallelism and the input partition count, including when distributed validation and early stopping are enabled.
+The worker setting changes where training data is materialized:
 
-With an automatically selected or explicit `num_workers > 1`, Spark repartitions the input, starts one barrier task per worker, exchanges worker addresses, and coordinates LightGBM's native data-parallel learner. Each distributed worker defaults to one native thread to avoid oversubscribing Spark CPU slots; pass native `num_threads` explicitly to override it. Distributed execution requires:
+| Setting | Execution and memory behavior | Intended use |
+| --- | --- | --- |
+| `num_workers=1` | Spark partitions are read and the complete training dataset—and validation dataset, when present—is collected into NumPy arrays on the driver. Native LightGBM trains in the driver process. | Local development, compatibility fallback, ranking, and datasets that safely fit in driver memory. |
+| `num_workers>1` | Spark repartitions the data into a barrier stage. Each executor-side worker converts only its shard to contiguous NumPy buffers and participates in LightGBM's native `data_parallel` network. Training and validation rows are not collected to the driver; the driver receives bounded metadata and the trained model artifact. | Cluster datasets that should remain distributed. Each worker shard must fit in that executor's memory. |
+| `num_workers=None` | Selects `1` for local Spark and ranking. On a cluster, classification and regression use the smaller of Spark's available parallelism and the input partition count. | Portable default. Set an explicit value when cluster capacity or scheduling requires tighter control. |
+
+Distributed workers default to one native LightGBM thread per Spark task to avoid CPU oversubscription. Pass `num_threads` explicitly when the Spark resource configuration provides additional CPU capacity per task.
+
+Distributed execution requires:
 
 - SparkLightGBM, NumPy, and the same compatible LightGBM build on every executor.
 - Spark barrier execution support.
@@ -138,9 +188,16 @@ With an automatically selected or explicit `num_workers > 1`, Spark repartitions
 - Listener ports available between executors; set `local_listen_port` if `12400 + worker_id` is unavailable.
 - Correct executor networking. `SPARK_LOCAL_IP` can provide the advertised worker address when hostname resolution is unsuitable.
 
-Distributed ranking is not yet supported because group boundaries must not be split across workers. Test distributed behavior on the target local Spark, Databricks, or standard cluster before relying on it.
-
 Inference uses partition-level NumPy batches instead of row-wise Python UDFs. A native booster is cached per reused Python worker, and classification prediction, probability, and raw prediction are derived from the same raw-score batch.
+
+## Current limitations
+
+- The project is beta software and its public API may change before `1.0.0`.
+- Distributed ranking is not yet supported because query groups must remain complete and worker-local. Ranking therefore uses the single-worker path.
+- Distributed early stopping supports metrics that can be exactly aggregated from worker-level results. Non-decomposable metrics currently rejected for this mode include `auc`, `average_precision`, `map`, and `ndcg`; use `num_workers=1` when early stopping depends on them.
+- Distributed jobs require Spark barrier scheduling plus stable, mutually reachable executor addresses and ports. Executor loss aborts the coordinated native training job.
+- Models use native LightGBM persistence rather than Spark ML `MLWriter`/`MLReader`, and the estimators are not yet Spark ML `Estimator`/`Model` stages for `Pipeline` or `CrossValidator`.
+- CPU is the supported default execution path; GPU execution is not currently documented or tested by this project.
 
 ## Predictions and explainability
 
