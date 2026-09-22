@@ -22,6 +22,12 @@ class _SingleScoreBooster:
         return np.asarray([1.0 / (1.0 + math.exp(-self.score))])
 
 
+class _RawOnlyBooster(_SingleScoreBooster):
+    def predict(self, matrix, pred_leaf=False, raw_score=False, pred_contrib=False):
+        assert raw_score, "classification outputs must be calculated from raw margins"
+        return np.asarray([self.score])
+
+
 def test_binary_prediction_matches_synapseml_contract():
     references = [
         (0.47733373687589564, [-0.47733373687589564, 0.47733373687589564], [0.3828819217908761, 0.6171180782091239]),
@@ -31,3 +37,18 @@ def test_binary_prediction_matches_synapseml_contract():
         model = LightGBMClassificationModel(_SingleScoreBooster(score), _ClassifierEstimator(), 1)
         np.testing.assert_allclose(model._predict([1.0], "raw"), expected_raw, rtol=0.0, atol=1e-15)
         np.testing.assert_allclose(model._predict([1.0], "prob"), expected_probability, rtol=0.0, atol=1e-15)
+
+
+def test_binary_prediction_is_derived_from_raw_prediction():
+    for score, expected in [(0.25, 1.0), (-0.25, 0.0)]:
+        model = LightGBMClassificationModel(_RawOnlyBooster(score), _ClassifierEstimator(), 1)
+        raw = model._predict([1.0], "raw")
+        assert model._predict([1.0], "prediction") == expected
+        assert model._predict([1.0], "prediction") == float(np.argmax(raw))
+
+
+def test_null_features_produce_null_outputs_consistently():
+    model = LightGBMClassificationModel(_RawOnlyBooster(0.25), _ClassifierEstimator(), 1)
+    assert model._predict(None, "raw") is None
+    assert model._predict(None, "prob") is None
+    assert model._predict(None, "prediction") is None

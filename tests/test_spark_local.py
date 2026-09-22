@@ -26,7 +26,7 @@ def test_classifier_spark_local_matches_native_prediction():
         assert all(row.rawPrediction is not None for row in result)
         assert all(row.leafPrediction is not None and all(value is not None for value in row.leafPrediction) for row in result)
         assert all(0.0 <= row.probability[0] <= 1.0 for row in result)
-        assert all(float(row.prediction) == float(row.probability[0] >= 0.5) for row in result)
+        assert all(float(row.prediction) == float(np.argmax(row.rawPrediction)) for row in result)
         assert all(isinstance(value, int) for row in result for value in row.leafPrediction)
         expected_raw = np.column_stack((-native_scores, native_scores))
         np.testing.assert_allclose([row.rawPrediction for row in result], expected_raw, rtol=1e-12, atol=1e-12)
@@ -38,6 +38,10 @@ def test_classifier_spark_local_matches_native_prediction():
         assert model.predict_leaf([[1.0, 1.0]]).shape[1] >= 1
         assert model.predict_shap([[1.0, 1.0]]).shape == (1, 3)
 
+        null_features = spark.createDataFrame([(None,)], frame.select("features").schema)
+        null_result = model.transform(null_features).select("prediction", "probability", "rawPrediction", "leafPrediction").first()
+        assert all(value is None for value in null_result)
+
         multiclass = spark.createDataFrame([([0.0, 0.0], 0.0), ([0.0, 1.0], 1.0), ([0.0, 2.0], 2.0), ([1.0, 0.0], 0.0), ([1.0, 1.0], 1.0), ([1.0, 2.0], 2.0)], ["features", "label"])
         multiclass_result = LightGBMClassifier(num_class=3, n_estimators=3, min_data_in_leaf=1, seed=7).fit(multiclass).transform(multiclass).select("prediction", "probability", "rawPrediction", "leafPrediction").collect()
         assert len(multiclass_result) == multiclass.count()
@@ -45,6 +49,7 @@ def test_classifier_spark_local_matches_native_prediction():
         assert all(row.rawPrediction is not None and len(row.rawPrediction) == 3 for row in multiclass_result)
         assert all(row.leafPrediction is not None and all(isinstance(value, int) for value in row.leafPrediction) for row in multiclass_result)
         assert all(abs(sum(row.probability) - 1.0) < 1e-9 for row in multiclass_result)
+        assert all(float(row.prediction) == float(np.argmax(row.rawPrediction)) for row in multiclass_result)
 
         regression = spark.createDataFrame([([0.0, 0.0], 0.0), ([0.0, 1.0], 1.0), ([1.0, 0.0], 1.0), ([1.0, 1.0], 2.0)], ["features", "label"])
         for estimator in (LightGBMRegressor(n_estimators=3, min_data_in_leaf=1, seed=7), LightGBMRegressor(objective="quantile", alpha=0.5, n_estimators=3, min_data_in_leaf=1, seed=7)):

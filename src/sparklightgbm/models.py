@@ -5,22 +5,51 @@ class BaseLightGBMModel:
     def __init__(self, booster, estimator, n_features, classes=None): self.booster, self.estimator, self.n_features, self.classes_ = booster, estimator, n_features, classes
     def _is_binary_classifier(self):
         return self.estimator.kind == "classifier" and self.booster.num_model_per_iteration() == 1
-    def _predict(self, value, kind):
+    @staticmethod
+    def _sigmoid(score):
+        """Numerically stable sigmoid used by LightGBM's binary objective."""
         import math
+        if score >= 0:
+            return 1.0 / (1.0 + math.exp(-score))
+        exp_score = math.exp(score)
+        return exp_score / (1.0 + exp_score)
+    def _prediction_from_raw(self, raw):
         import numpy as np
+        if self.estimator.kind != "classifier":
+            return float(raw)
+        scores = np.asarray(raw, dtype=float).reshape(-1)
+        return float(np.argmax(scores))
+    def _probability_from_raw(self, raw):
+        import numpy as np
+        scores = np.asarray(raw, dtype=float).reshape(-1)
+        if self._is_binary_classifier():
+            positive = self._sigmoid(float(scores[-1]))
+            return [1.0 - positive, positive]
+        # LightGBM's multiclass objective converts margins with softmax.
+        shifted = scores - np.max(scores)
+        probabilities = np.exp(shifted)
+        probabilities /= probabilities.sum()
+        return probabilities.tolist()
+    def _predict(self, value, kind):
+        import numpy as np
+        if value is None:
+            return None
         if hasattr(value, "toArray"): value = value.toArray()
         binary = self._is_binary_classifier()
-        result = self.booster.predict(np.asarray([value], dtype=float), pred_leaf=(kind == "leaf"), raw_score=(kind in {"raw", "prob"} and binary) or kind == "raw", pred_contrib=(kind == "shap"))[0]
-        if kind == "prediction" and self.estimator.kind == "classifier":
-            result = int(np.argmax(result)) if hasattr(result, "__len__") else int(result >= 0.5)
+        # Classification prediction and probability are deliberately derived from
+        # the same raw margins exposed in rawPrediction, as Spark probabilistic
+        # classifiers (and SynapseML) require.
+        raw_based = kind in {"raw", "prob", "prediction"}
+        result = self.booster.predict(np.asarray([value], dtype=float), pred_leaf=(kind == "leaf"), raw_score=raw_based, pred_contrib=(kind == "shap"))[0]
         if kind == "raw" and binary:
             score = float(np.asarray(result).reshape(-1)[0])
             return [-score, score]
+        if kind == "prediction":
+            raw = [-float(result), float(result)] if binary else result
+            return self._prediction_from_raw(raw)
         if kind == "prob":
-            if binary:
-                score = float(np.asarray(result).reshape(-1)[0])
-                return [1.0 / (1.0 + math.exp(score)), 1.0 / (1.0 + math.exp(-score))]
-            return [float(value) for value in np.asarray(result).reshape(-1).tolist()]
+            raw = [-float(result), float(result)] if binary else result
+            return self._probability_from_raw(raw)
         if kind == "leaf":
             return [int(value) for value in np.asarray(result).reshape(-1).tolist()]
         if hasattr(result, "tolist"):
