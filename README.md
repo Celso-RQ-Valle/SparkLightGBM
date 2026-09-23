@@ -6,15 +6,17 @@ The project aims for efficient training and inference, numerical correctness, di
 
 ## Status
 
-`0.1.0b1` is a Beta release for objective runtime testing. It is not production-stable. The future stable API and release target is `1.0.0`; public APIs may still change before then.
+`0.9.x` is the pre-1.0 real-world validation series. It is intended for practical evaluation, but the public API may still change based on results across different environments, Spark configurations, datasets, and workloads. Version `1.0.0` is reserved for the stable release after that validation.
 
 ## Installation
 
 ```bash
-pip install sparklightgbm pyspark
+pip install "sparklightgbm[spark]"
 ```
 
-The package requires Python 3.9+, NumPy, and official LightGBM 4.x. Spark is used at runtime and should be installed on the driver and every executor. The optional development installation is:
+Use `pip install sparklightgbm` when PySpark is already supplied by a managed Spark environment. The supported compatibility policy for `0.9.x` is Python 3.9-3.12, PySpark 3.4-3.5, LightGBM 4.x or newer, and NumPy 1.21 or newer. PySpark, LightGBM, NumPy, and this package must be available on the driver and every executor. Linux and Windows are exercised in CI; distributed multi-node training is primarily expected on Linux clusters.
+
+The optional development installation is:
 
 ```bash
 pip install "sparklightgbm[dev]"
@@ -74,7 +76,7 @@ All three estimators accept the shared parameters below. Additional keyword argu
 | `validation_data` | Spark `DataFrame` \| `None` | `None` | Validation DataFrame with matching feature, label, weight, and group names. Can also be passed to `fit()`. |
 | `early_stopping_rounds` | `int \| None` | `None` | Rounds without validation improvement; requires validation data. Distributed mode supports exactly aggregatable metrics. |
 | `seed` | `int` | `0` | Seed passed to LightGBM. |
-| `num_workers` | `int \| None` | `None` | Automatically selects worker count. Local Spark and ranking use driver training; clustered classification and regression use at most the available Spark slots and input partitions. Set explicitly to control execution mode. |
+| `num_workers` | `int \| None` | `None` | Automatically selects a conservative worker count. Local Spark and ranking use driver training. Clustered classification and regression use the smallest of four workers, the input partition count, and available Spark slots minus one. Set a positive integer to override the strategy. |
 | `local_listen_port` | `int` | `12400` | Distributed listener base port; worker `n` uses `local_listen_port + n`. |
 | `prediction_batch_size` | `int` | `1024` | Rows scored per native LightGBM prediction batch in each Spark partition. |
 | `objective` | `str \| None` | `None` | Native objective: defaults to `binary`/`multiclass`, `regression`, or `lambdarank`; `quantile` is supported for regression. |
@@ -176,7 +178,9 @@ The worker setting changes where training data is materialized:
 | --- | --- | --- |
 | `num_workers=1` | Spark partitions are read and the complete training dataset—and validation dataset, when present—is collected into NumPy arrays on the driver. Native LightGBM trains in the driver process. | Local development, compatibility fallback, ranking, and datasets that safely fit in driver memory. |
 | `num_workers>1` | Spark repartitions the data into a barrier stage. Each executor-side worker converts only its shard to contiguous NumPy buffers and participates in LightGBM's native `data_parallel` network. Training and validation rows are not collected to the driver; the driver receives bounded metadata and the trained model artifact. | Cluster datasets that should remain distributed. Each worker shard must fit in that executor's memory. |
-| `num_workers=None` | Selects `1` for local Spark and ranking. On a cluster, classification and regression use the smaller of Spark's available parallelism and the input partition count. | Portable default. Set an explicit value when cluster capacity or scheduling requires tighter control. |
+| `num_workers=None` | Selects `1` for local Spark and ranking. On a cluster, classification and regression reserve one slot and select the smallest of `4`, the remaining Spark parallelism, and the input partition count. The result is always at least `1`. | Portable, conservative default that avoids claiming every reported slot. Set an explicit value when cluster capacity or scheduling calls for another count. |
+
+`SparkContext.defaultParallelism` is an estimate, not a dynamic cluster-capacity reservation. On shared or autoscaling clusters, set `num_workers` explicitly when the scheduler policy requires a specific limit. An explicit value always takes precedence, including in local mode; the requested barrier tasks must be schedulable concurrently.
 
 Distributed workers default to one native LightGBM thread per Spark task to avoid CPU oversubscription. Pass `num_threads` explicitly when the Spark resource configuration provides additional CPU capacity per task.
 
@@ -192,7 +196,7 @@ Inference uses partition-level NumPy batches instead of row-wise Python UDFs. A 
 
 ## Current limitations
 
-- The project is beta software and its public API may change before `1.0.0`.
+- The `0.9.x` API is in pre-1.0 validation and may change before `1.0.0`.
 - Distributed ranking is not yet supported because query groups must remain complete and worker-local. Ranking therefore uses the single-worker path.
 - Distributed early stopping supports metrics that can be exactly aggregated from worker-level results. Non-decomposable metrics currently rejected for this mode include `auc`, `average_precision`, `map`, and `ndcg`; use `num_workers=1` when early stopping depends on them.
 - Distributed jobs require Spark barrier scheduling plus stable, mutually reachable executor addresses and ports. Executor loss aborts the coordinated native training job.
@@ -228,13 +232,13 @@ restored = LightGBMClassificationModel.load_native_model(
 )
 ```
 
-The native model file is portable across Spark jobs with a compatible LightGBM installation. It is not a Spark ML `PipelineModel` format in this beta.
+The native model file is portable across Spark jobs with a compatible LightGBM installation. It is not a Spark ML `PipelineModel` format.
 
 `save_native_model(path)` accepts a filesystem path (`str` or `pathlib.Path`). `LightGBMClassificationModel.load_native_model(path, **kwargs)`, `LightGBMRegressionModel.load_native_model(path, **kwargs)`, and `LightGBMRankingModel.load_native_model(path, **kwargs)` accept the native model path plus optional `features_col`, `prediction_col`, `raw_prediction_col`, `probability_col`, `leaf_prediction_col`, and `kind` strings used to reconstruct Spark output behavior.
 
 ## Compatibility and errors
 
-SparkLightGBM validates required columns and checks that PySpark 3.3+ and LightGBM are available on the driver. Runtime imports also need to be available on executors. Missing dependencies, missing columns, missing ranking groups, unsupported distributed validation settings, and invalid native parameters fail with errors from the bridge or LightGBM.
+SparkLightGBM validates required columns and checks that supported PySpark and LightGBM installations are available on the driver. The `0.9.x` compatibility policy is Python 3.9-3.12 and PySpark 3.4-3.5; newer combinations are not claimed until validated. Runtime imports also need to be available on executors. Missing dependencies, missing columns, missing ranking groups, unsupported distributed validation settings, and invalid native parameters fail with errors from the bridge or LightGBM.
 
 ## Development
 

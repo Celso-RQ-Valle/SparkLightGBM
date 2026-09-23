@@ -29,7 +29,12 @@ def collect_training_data(df, features_col, label_col, weight_col=None, group_co
     return x, y, w, ([p[3] for p in parts] if group_col else None)
 
 def resolve_num_workers(estimator, df, validation_data=None):
-    """Choose a safe amount of Spark parallelism when no override is supplied."""
+    """Choose conservative Spark parallelism when no override is supplied.
+
+    Automatic cluster execution reserves one Spark slot and uses at most four
+    workers. The input partition count remains an upper bound. Local mode and
+    ranking use the single-worker compatibility path.
+    """
     if estimator.num_workers is not None:
         return estimator.num_workers
     # Local mode is faster without barrier networking. Distributed ranking is
@@ -41,7 +46,8 @@ def resolve_num_workers(estimator, df, validation_data=None):
         return 1
     available_slots = max(1, int(sc.defaultParallelism))
     input_partitions = max(1, int(df.rdd.getNumPartitions()))
-    return min(available_slots, input_partitions)
+    usable_slots = max(1, available_slots - 1)
+    return min(4, usable_slots, input_partitions)
 
 def train_native(estimator, df, validation_data=None):
     _, lgb = require_runtime()
@@ -108,6 +114,26 @@ def _distributed_metric_names(params):
     return [str(name).strip().lower() for name in metric]
 
 
+def _worker_host(allow_loopback):
+    """Return an address LightGBM can match to the current machine."""
+    import os
+    import socket
+
+    configured = os.environ.get("SPARK_LOCAL_IP")
+    # LightGBM may not identify 127/8 as a local machine on Windows. In local
+    # Spark mode, prefer a hostname-derived interface address when available.
+    if configured and not (allow_loopback and configured.startswith("127.")):
+        return configured
+    for name in (socket.getfqdn(), socket.gethostname()):
+        try:
+            resolved = socket.gethostbyname(name)
+        except socket.gaierror:
+            continue
+        if resolved and (allow_loopback or not resolved.startswith("127.")):
+            return resolved
+    return configured or "127.0.0.1"
+
+
 def _synchronize_evaluation(context, train_denominator, valid_denominator):
     """Aggregate decomposable validation metrics before early-stopping runs."""
     import json
@@ -138,8 +164,6 @@ def _synchronize_evaluation(context, train_denominator, valid_denominator):
 def train_native_distributed(estimator, df, validation_data, lgb, num_workers):
     """Coordinate official LightGBM's data-parallel learner from Spark barriers."""
     import json
-    import os
-    import socket
     from pyspark import BarrierTaskContext
     check_columns(df, estimator.features_col, estimator.label_col)
     if validation_data is not None:
@@ -197,12 +221,7 @@ def train_native_distributed(estimator, df, validation_data, lgb, num_workers):
             raise SparkLightGBMWorkerError(f"LightGBM worker {context.partitionId()} received no training rows")
         if has_validation and not valid_x:
             raise SparkLightGBMWorkerError(f"LightGBM worker {context.partitionId()} received no validation rows")
-        host = os.environ.get("SPARK_LOCAL_IP")
-        if not host:
-            try:
-                host = socket.gethostbyname(socket.getfqdn())
-            except socket.gaierror:
-                host = socket.gethostbyname(socket.gethostname())
+        host = _worker_host(allow_loopback)
         if host.startswith("127.") and not allow_loopback:
             raise SparkLightGBMNetworkError("A distributed worker resolved to a loopback address; configure SPARK_LOCAL_IP with an executor-reachable address")
         port = local_listen_port + context.partitionId()

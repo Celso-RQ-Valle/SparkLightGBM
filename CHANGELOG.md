@@ -1,7 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.9.0 - 2026-09-22
 
+- Prepare metadata, documentation, source distribution, wheel, and CI for a public PyPI release.
+- Define the supported Python 3.9-3.12, PySpark 3.4-3.5 compatibility policy.
+- Make `num_workers=None` the documented default and conservatively cap automatic cluster training at four workers while reserving one reported Spark slot.
 - Keep validation shards distributed during native multi-worker training.
 - Synchronize decomposable validation metrics across barrier workers for consistent distributed early stopping.
 - Batch inference by Spark partition and reuse native boosters in Python workers.

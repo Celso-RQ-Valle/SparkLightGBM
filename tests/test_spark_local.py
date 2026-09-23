@@ -8,7 +8,7 @@ pyspark = pytest.importorskip("pyspark")
 lightgbm = pytest.importorskip("lightgbm")
 
 
-def test_classifier_spark_local_matches_native_prediction():
+def test_classifier_spark_local_matches_native_prediction(tmp_path):
     os.environ.setdefault("PYSPARK_PYTHON", sys.executable)
     os.environ.setdefault("PYSPARK_DRIVER_PYTHON", sys.executable)
     from pyspark.sql import SparkSession
@@ -37,6 +37,17 @@ def test_classifier_spark_local_matches_native_prediction():
         assert model.predict_leaf([[1.0, 1.0]]).shape[0] == 1
         assert model.predict_leaf([[1.0, 1.0]]).shape[1] >= 1
         assert model.predict_shap([[1.0, 1.0]]).shape == (1, 3)
+
+        model_path = tmp_path / "classifier.txt"
+        model.save_native_model(model_path)
+        restored = model.__class__.load_native_model(model_path)
+        restored_result = restored.transform(frame).select("prediction", "probability").collect()
+        np.testing.assert_allclose(
+            [row.probability for row in restored_result],
+            [row.probability for row in result],
+            rtol=1e-12,
+            atol=1e-12,
+        )
 
         null_features = spark.createDataFrame([(None,)], frame.select("features").schema)
         null_result = model.transform(null_features).select("prediction", "probability", "rawPrediction", "leafPrediction").first()

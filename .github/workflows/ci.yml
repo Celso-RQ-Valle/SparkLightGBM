@@ -1,16 +1,30 @@
 name: CI
 on: [push, pull_request]
+
 jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      matrix: {python-version: ['3.9', '3.11', '3.12']}
+      matrix:
+        include:
+          - python-version: '3.9'
+            pyspark-version: 'pyspark~=3.4.0'
+          - python-version: '3.12'
+            pyspark-version: 'pyspark~=3.5.0'
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
       - uses: actions/setup-python@v5
-        with: {python-version: '${{ matrix.python-version }}'}
-      - run: pip install -e '.[dev]'
+        with:
+          python-version: '${{ matrix.python-version }}'
+      - run: python -m pip install build pytest '${{ matrix.pyspark-version }}'
+      - run: python -m build --wheel
+      - name: Install built wheel
+        run: python -m pip install --force-reinstall dist/*.whl
       - name: Configure Spark Python runtime
         shell: bash
         run: |
@@ -18,12 +32,35 @@ jobs:
           echo "PYSPARK_DRIVER_PYTHON=$(command -v python)" >> "$GITHUB_ENV"
           echo "SPARK_LOCAL_IP=127.0.0.1" >> "$GITHUB_ENV"
       - run: python -m pytest -q
+
   package:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: {python-version: '3.11'}
-      - run: pip install build twine
+        with:
+          python-version: '3.11'
+      - run: python -m pip install build twine
       - run: python -m build
-      - run: twine check dist/*
+      - run: python -m twine check dist/*
+      - name: Inspect artifacts
+        shell: bash
+        run: |
+          python -m zipfile --list dist/*.whl
+          python -m tarfile --list dist/*.tar.gz
+      - name: Install wheel outside repository
+        shell: bash
+        run: |
+          python -m venv smoke-env
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            smoke-env/Scripts/python -m pip install dist/*.whl
+            cd "$RUNNER_TEMP"
+            "$GITHUB_WORKSPACE/smoke-env/Scripts/python" -c "import sparklightgbm; assert sparklightgbm.__version__ == '0.9.0'"
+          else
+            smoke-env/bin/python -m pip install dist/*.whl
+            cd "$RUNNER_TEMP"
+            "$GITHUB_WORKSPACE/smoke-env/bin/python" -c "import sparklightgbm; assert sparklightgbm.__version__ == '0.9.0'"
+          fi

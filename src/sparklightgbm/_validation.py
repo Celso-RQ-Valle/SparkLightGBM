@@ -7,8 +7,9 @@ def require_runtime():
         lightgbm = importlib.import_module("lightgbm")
     except ImportError as exc:
         raise ImportError("SparkLightGBM requires pyspark and lightgbm on the driver and executors") from exc
-    if tuple(int(x) for x in pyspark.__version__.split(".")[:2]) < (3, 3):
-        raise RuntimeError("SparkLightGBM requires Apache Spark 3.3 or newer")
+    spark_version = tuple(int(x) for x in pyspark.__version__.split(".")[:2])
+    if not (3, 4) <= spark_version < (4, 0):
+        raise RuntimeError("SparkLightGBM supports PySpark 3.4 through 3.5")
     return pyspark, lightgbm
 
 def check_columns(df, features_col, label_col=None):

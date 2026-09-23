@@ -1,26 +1,60 @@
 [build-system]
-requires = ["hatchling>=1.25"]
+requires = ["hatchling>=1.25,<2"]
 build-backend = "hatchling.build"
+
 [project]
 name = "sparklightgbm"
-version = "0.1.0b1"
-description = "Beta: a lightweight Python bridge between Apache Spark DataFrames and official LightGBM."
-readme = "README.md"
-license = { file = "LICENSE" }
-requires-python = ">=3.9"
+version = "0.9.0"
+description = "A lightweight bridge between Apache Spark DataFrames and official LightGBM."
+readme = { file = "README.md", content-type = "text/markdown" }
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.9,<3.13"
 authors = [{ name = "SparkLightGBM contributors" }]
-keywords = ["apache-spark", "lightgbm", "pyspark", "machine-learning"]
-classifiers = ["Development Status :: 4 - Beta", "License :: OSI Approved :: MIT License", "Programming Language :: Python :: 3"]
-dependencies = ["numpy>=1.21", "lightgbm>=4.0"]
+maintainers = [{ name = "SparkLightGBM maintainers" }]
+keywords = ["apache-spark", "distributed-training", "lightgbm", "machine-learning", "pyspark"]
+classifiers = [
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = ["lightgbm>=4.0", "numpy>=1.21"]
+
 [project.optional-dependencies]
-spark = ["pyspark>=3.5.9,<4"]
-test = ["pytest>=7", "pyspark>=3.3,<4"]
-dev = ["build>=1", "twine>=5", "ruff>=0.6", "pytest>=7", "pyspark>=3.5.9,<4"]
+spark = ["pyspark>=3.4,<4"]
+test = ["pytest>=7", "pyspark>=3.4,<4"]
+dev = ["build>=1", "pytest>=7", "pyspark>=3.4,<4", "ruff>=0.6", "twine>=5"]
+
 [project.urls]
 Homepage = "https://github.com/Celso-RQ-Valle/SparkLightGBM"
 Repository = "https://github.com/Celso-RQ-Valle/SparkLightGBM"
+Documentation = "https://github.com/Celso-RQ-Valle/SparkLightGBM#readme"
+Issues = "https://github.com/Celso-RQ-Valle/SparkLightGBM/issues"
+Changelog = "https://github.com/Celso-RQ-Valle/SparkLightGBM/blob/main/CHANGELOG.md"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/sparklightgbm"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "/CHANGELOG.md",
+  "/CONTRIBUTING.md",
+  "/LICENSE",
+  "/README.md",
+  "/docs",
+  "/pyproject.toml",
+  "/src",
+  "/tests",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
