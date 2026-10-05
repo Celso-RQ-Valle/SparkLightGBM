@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.1 - 2026-10-04
+
+- Default distributed training and Spark prediction to native LightGBM/OpenMP automatic threading.
+- Honor explicit thread limits and native aliases during Spark prediction, including overrides when loading native models.
+- Document thread selection and Spark CPU allocation considerations.
+- Add regression tests for prediction threading and distributed training overrides.
+
 ## 0.9.0 - 2026-09-22
 
 - Prepare metadata, documentation, source distribution, wheel, and CI for a public PyPI release.

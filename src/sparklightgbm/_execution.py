@@ -230,9 +230,8 @@ def train_native_distributed(estimator, df, validation_data, lgb, num_workers):
         weight = np.asarray(train_weight, dtype=float) if has_weight else None
         params = dict(native_params); rounds = int(params.pop("n_estimators", params.pop("num_boost_round", 100)))
         params.setdefault("device_type", "cpu"); params.setdefault("seed", seed); params.setdefault("verbosity", -1)
-        # Each barrier task occupies one Spark CPU slot. Restrict its native
-        # thread pool unless the user explicitly requests a different value.
-        params.setdefault("num_threads", 1)
+        # Leave thread selection to LightGBM unless supplied by the user.
+        # In particular, do not mask native aliases such as n_jobs.
         params.setdefault("objective", objective)
         if estimator_kind == "classifier" and objective == "multiclass": params.setdefault("num_class", configured_num_class or len(classes))
         params.update({"tree_learner": "data", "num_machines": num_workers, "machines": ",".join(f"{json.loads(p)['host']}:{json.loads(p)['port']}" for p in peers), "local_listen_port": port})

@@ -40,7 +40,7 @@ def test_classifier_spark_local_matches_native_prediction(tmp_path):
 
         model_path = tmp_path / "classifier.txt"
         model.save_native_model(model_path)
-        restored = model.__class__.load_native_model(model_path)
+        restored = model.__class__.load_native_model(model_path, num_threads=2)
         restored_result = restored.transform(frame).select("prediction", "probability").collect()
         np.testing.assert_allclose(
             [row.probability for row in restored_result],
@@ -85,12 +85,14 @@ def test_classifier_spark_local_matches_native_prediction(tmp_path):
         )
         distributed_model = LightGBMClassifier(
             num_workers=2,
+            num_threads=2,
             n_estimators=20,
             min_data_in_leaf=1,
             early_stopping_rounds=3,
             seed=7,
         ).fit(distributed, validation_data=validation)
         assert 0 < distributed_model.booster.current_iteration() <= 20
+        assert "[num_threads: 2]" in distributed_model.booster.model_to_string()
         assert distributed_model.transform(validation).count() == validation.count()
     finally:
         spark.stop()

@@ -28,9 +28,12 @@ def _batched(iterator, size):
         yield batch
 
 
-def _score_partition(rows, model_string, feature_index, base_indexes, batch_size, kind, binary, include_raw, include_probability, include_leaf):
+def _score_partition(rows, model_string, feature_index, base_indexes, batch_size, kind, binary, include_raw, include_probability, include_leaf, thread_params=None):
     import numpy as np
     booster = _cached_booster(model_string)
+    # Model strings do not populate Booster.params. Pass the thread policy on
+    # every call, including automatic mode, because cached boosters are reused.
+    thread_params = thread_params or {"num_threads": 0}
     for rows_batch in _batched(rows, batch_size):
         features = []
         valid_positions = []
@@ -46,7 +49,7 @@ def _score_partition(rows, model_string, feature_index, base_indexes, batch_size
         if features:
             matrix = np.ascontiguousarray(features, dtype=float)
             if kind == "classifier":
-                native_raw = np.asarray(booster.predict(matrix, raw_score=True, num_threads=1), dtype=float)
+                native_raw = np.asarray(booster.predict(matrix, raw_score=True, **thread_params), dtype=float)
                 if binary:
                     scores = native_raw.reshape(-1)
                     raw = np.column_stack((-scores, scores))
@@ -63,10 +66,10 @@ def _score_partition(rows, model_string, feature_index, base_indexes, batch_size
                     probability /= probability.sum(axis=1, keepdims=True)
                 prediction = np.argmax(raw, axis=1).astype(float)
             else:
-                prediction = np.asarray(booster.predict(matrix, num_threads=1), dtype=float).reshape(-1)
-                raw = np.asarray(booster.predict(matrix, raw_score=True, num_threads=1), dtype=float).reshape(-1) if include_raw else None
+                prediction = np.asarray(booster.predict(matrix, **thread_params), dtype=float).reshape(-1)
+                raw = np.asarray(booster.predict(matrix, raw_score=True, **thread_params), dtype=float).reshape(-1) if include_raw else None
                 probability = None
-            leaves = np.asarray(booster.predict(matrix, pred_leaf=True, num_threads=1)).reshape(len(valid_positions), -1) if include_leaf else None
+            leaves = np.asarray(booster.predict(matrix, pred_leaf=True, **thread_params)).reshape(len(valid_positions), -1) if include_leaf else None
             for batch_index, position in enumerate(valid_positions):
                 outputs[position][0] = float(prediction[batch_index])
                 if include_raw:
@@ -86,7 +89,10 @@ def _score_partition(rows, model_string, feature_index, base_indexes, batch_size
             yield tuple(row[index] for index in base_indexes) + tuple(appended)
 
 class BaseLightGBMModel:
-    def __init__(self, booster, estimator, n_features, classes=None): self.booster, self.estimator, self.n_features, self.classes_ = booster, estimator, n_features, classes
+    def __init__(self, booster, estimator, n_features, classes=None):
+        self.booster, self.estimator, self.n_features, self.classes_ = booster, estimator, n_features, classes
+        params = getattr(estimator, "params", {})
+        self._thread_params = {key: value for key, value in params.items() if key in {"num_threads", "num_thread", "nthread", "nthreads", "n_jobs"}}
     def _is_binary_classifier(self):
         return self.estimator.kind == "classifier" and self.booster.num_model_per_iteration() == 1
     @staticmethod
@@ -165,7 +171,8 @@ class BaseLightGBMModel:
         batch_size = getattr(self.estimator, "prediction_batch_size", 1024)
         kind = self.estimator.kind
         binary = self._is_binary_classifier()
-        scored = dataset.rdd.mapPartitions(lambda rows: _score_partition(rows, model_string, feature_index, base_indexes, batch_size, kind, binary, bool(raw_name), bool(prob_name), bool(leaf_name)))
+        thread_params = self._thread_params
+        scored = dataset.rdd.mapPartitions(lambda rows: _score_partition(rows, model_string, feature_index, base_indexes, batch_size, kind, binary, bool(raw_name), bool(prob_name), bool(leaf_name), thread_params))
         return dataset.sparkSession.createDataFrame(scored, StructType(fields))
     def predict_raw(self, matrix):
         result = self.booster.predict(matrix, raw_score=True)
@@ -191,6 +198,7 @@ class BaseLightGBMModel:
         class E: pass
         default_kind = "classifier" if cls.__name__.startswith("LightGBMClassification") else "ranker" if cls.__name__.startswith("LightGBMRanking") else "regressor"
         e = E(); e.kind = kwargs.pop("kind", default_kind); e.features_col = kwargs.pop("features_col", "features"); e.prediction_col = kwargs.pop("prediction_col", "prediction"); e.raw_prediction_col = kwargs.pop("raw_prediction_col", "rawPrediction"); e.probability_col = kwargs.pop("probability_col", "probability"); e.leaf_prediction_col = kwargs.pop("leaf_prediction_col", "leafPrediction"); e.prediction_batch_size = kwargs.pop("prediction_batch_size", 1024)
+        e.params = kwargs
         return cls(booster, e, booster.num_feature())
 
 class LightGBMClassificationModel(BaseLightGBMModel): pass

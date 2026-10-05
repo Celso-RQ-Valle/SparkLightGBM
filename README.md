@@ -182,7 +182,14 @@ The worker setting changes where training data is materialized:
 
 `SparkContext.defaultParallelism` is an estimate, not a dynamic cluster-capacity reservation. On shared or autoscaling clusters, set `num_workers` explicitly when the scheduler policy requires a specific limit. An explicit value always takes precedence, including in local mode; the requested barrier tasks must be schedulable concurrently.
 
-Distributed workers default to one native LightGBM thread per Spark task to avoid CPU oversubscription. Pass `num_threads` explicitly when the Spark resource configuration provides additional CPU capacity per task.
+Training and Spark prediction default to LightGBM's automatic threading (native `num_threads=0`, the OpenMP default, which can be controlled with `OMP_NUM_THREADS`). Set `num_threads` to a positive integer to choose a fixed limit; the setting also applies to the fitted model's Spark `transform` calls. Native aliases such as `n_jobs` are accepted as well.
+
+```python
+automatic = LightGBMRegressor()  # Equivalent thread policy to num_threads=0
+limited = LightGBMRegressor(num_threads=2)  # Limit per native worker
+```
+
+Automatic threading does not discover Spark's per-task CPU allocation. Concurrent tasks on the same executor can oversubscribe CPUs, so match an explicit limit to your Spark resource configuration (for example, `num_threads=1` for one CPU per task). For distributed training, leave CPU capacity for network communication. Native model loading defaults to automatic Spark prediction threading; pass `num_threads=2` to `load_native_model` to choose a fixed prediction limit.
 
 Distributed execution requires:
 
