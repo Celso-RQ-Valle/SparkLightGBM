@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.2 - 2026-10-05
+
+- Allow Python 3.8 and newer without a speculative upper version cap.
+- Allow PySpark 4.x in dependency extras and runtime validation, retaining the PySpark 3.4 minimum.
+- Expand the CI integration matrix across Python 3.8-3.14 and Spark 3.4, 3.5, 4.0, 4.1, and 4.2.
+- Document compatible runtime combinations and the requirement for classic Spark with RDD access.
+
 ## 0.9.1 - 2026-10-04
 
 - Default distributed training and Spark prediction to native LightGBM/OpenMP automatic threading.

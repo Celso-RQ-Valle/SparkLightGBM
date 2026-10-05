@@ -14,7 +14,22 @@ The project aims for efficient training and inference, numerical correctness, di
 pip install "sparklightgbm[spark]"
 ```
 
-Use `pip install sparklightgbm` when PySpark is already supplied by a managed Spark environment. The supported compatibility policy for `0.9.x` is Python 3.9-3.12, PySpark 3.4-3.5, LightGBM 4.x or newer, and NumPy 1.21 or newer. PySpark, LightGBM, NumPy, and this package must be available on the driver and every executor. Linux and Windows are exercised in CI; distributed multi-node training is primarily expected on Linux clusters.
+Use `pip install sparklightgbm` when PySpark is already supplied by a managed Spark environment; this does not install or replace the platform's PySpark. The package requires Python >=3.8, PySpark >=3.4, LightGBM >=4.0, and NumPy >=1.21. There is no speculative Python or Spark upper version cap: installation still depends on those dependencies supporting your Python version and operating system. These expanded requirements apply starting with 0.9.2; the original 0.9.0 and 0.9.1 distributions restricted Python to 3.9-3.12.
+
+The integration CI matrix covers the following combinations, rather than assuming every Python version works with every Spark version:
+
+| Python | PySpark series in CI |
+| --- | --- |
+| 3.8-3.9 | 3.4 |
+| 3.10-3.12 | 3.5 |
+| 3.13 | 4.0 |
+| 3.14 | 4.1, 4.2 |
+
+Newer runtimes are allowed but are not automatically considered tested. See the upstream [Spark installation requirements](https://spark.apache.org/docs/latest/api/python/getting_started/install.html) for the Python and Java requirements of your chosen Spark release; Spark 4 requires Java 17 or newer. Pip selects compatible dependency releases for older Python versions.
+
+PySpark, LightGBM, NumPy, and this package must be available on the driver and every executor, with matching Python minor versions. This bridge requires classic Spark with `SparkContext`, RDDs, and (for distributed training) barrier execution. Spark Connect and managed compute modes that disable those APIs are not supported. Linux and Windows packaging are exercised in CI; the Spark integration matrix runs on Linux, and distributed multi-node training is primarily expected on Linux clusters.
+
+If pip reports “Ignored versions that require a different Python version”, check the notebook's Python with `import sys; print(sys.version)` and Spark with `print(spark.version)`. Use a package release whose metadata allows that Python version and a compatible Spark runtime; bypassing pip's Python check does not establish runtime compatibility.
 
 The optional development installation is:
 
@@ -245,7 +260,7 @@ The native model file is portable across Spark jobs with a compatible LightGBM i
 
 ## Compatibility and errors
 
-SparkLightGBM validates required columns and checks that supported PySpark and LightGBM installations are available on the driver. The `0.9.x` compatibility policy is Python 3.9-3.12 and PySpark 3.4-3.5; newer combinations are not claimed until validated. Runtime imports also need to be available on executors. Missing dependencies, missing columns, missing ranking groups, unsupported distributed validation settings, and invalid native parameters fail with errors from the bridge or LightGBM.
+SparkLightGBM validates required columns and checks that PySpark >=3.4 and LightGBM installations are available on the driver. See the installation section for the Python/Spark CI matrix and required runtime capabilities. Runtime imports also need to be available on executors. Missing dependencies, missing columns, missing ranking groups, unsupported distributed validation settings, and invalid native parameters fail with errors from the bridge or LightGBM.
 
 ## Development
 
